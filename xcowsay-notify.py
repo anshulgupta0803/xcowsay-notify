@@ -1,5 +1,6 @@
 #!/usr/bin/python
 
+import os
 from collections import deque
 import random
 import subprocess
@@ -13,14 +14,15 @@ from dbus.mainloop.glib import DBusGMainLoop
 
 from gi.repository import GLib
 
-MAXLEN = 50
+MAXCOLS = 50
+MAXROWS = 30
 
 COMMAND = [
     "xcowsay",
     "--font=FiraCode Nerd Font",
     "--left",
     "--think",
-    "--image", "cow_small_left.png",
+    "--image", os.path.join(os.path.dirname(__file__), "cow_small_left.png"),
     "--cow-size=small"
 ]
 
@@ -81,13 +83,23 @@ class XCowsayNotifications(dbus.service.Object):
             self._id += 1
             notification_id = self._id
 
-        message = "{:s} {:s}".format(summary, body)
-        if len(message) > MAXLEN:
-            message = message[:MAXLEN] + "..."
+        message = "{:s}\n\n{:s}".format(summary, body)
+        pruned_message = []
+        rows = 0
+        for line in message.splitlines():
+            if len(line) > MAXCOLS:
+                pruned_message.append(line[:MAXCOLS] + "...")
+            else:
+                pruned_message.append(line)
+            rows += 1
+            if rows > MAXROWS:
+                pruned_message.append("")
+                pruned_message.append("... More ...")
+                break
 
         NOTIFICATION_QUEUE.append([
             notification_id,
-            message
+            '\n'.join(pruned_message)
         ])
 
         return notification_id
@@ -98,7 +110,7 @@ class XCowsayNotifications(dbus.service.Object):
 
     @dbus.service.signal('org.freedesktop.Notifications', signature='uu')
     def NotificationClosed(self, id_in, reason_in):
-        print("Notification Closed")
+        pass
 
     @dbus.service.method("org.freedesktop.Notifications", in_signature='u', out_signature='')
     def CloseNotification(self, id):
