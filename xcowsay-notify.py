@@ -1,13 +1,11 @@
 #!/usr/bin/python
 
-import os
 from collections import deque
-import random
+import os
 import subprocess
 import time
 import threading
 
-from gi.repository import GObject
 import dbus
 import dbus.service
 from dbus.mainloop.glib import DBusGMainLoop
@@ -16,23 +14,35 @@ from gi.repository import GLib
 
 MAXCOLS = 50
 MAXROWS = 30
+NOTIFICATION_HEIGHT = 200
+MAX_HEIGHT = 2400
 
 COMMAND = [
     "xcowsay",
-    "--font=FiraCode Nerd Font",
+    "--font", "FiraCode Nerd Font 10",
     "--left",
-    "--think",
-    "--image", os.path.join(os.path.dirname(__file__), "cow_small_left.png"),
-    "--cow-size=small"
+    "--image", os.path.join(os.path.dirname(__file__), "cow_small_left.png")
 ]
 
-AT_FORMAT = "--at=3500,{:d}"
-
+AT_FORMAT = "--at=10000,{:d}"
 NOTIFICATION_QUEUE = deque()
 NOTIFICATION_QUEUE_LOCK = threading.Lock()
+BLOCKED_HEIGHT = [False] * MAX_HEIGHT
 
 
-def poll(process): return process.poll() != 0
+def find_and_reserve_free_space(height):
+    # TODO: Optimize using KMP algorithm
+    for i in range(len(BLOCKED_HEIGHT)):
+        flag = True
+        for j in range(height):
+            if i + j >= len(BLOCKED_HEIGHT) or BLOCKED_HEIGHT[i + j]:
+                flag = False
+                break
+        if flag:
+            for j in range(height):
+                BLOCKED_HEIGHT[i + j] = True
+            return i
+    return -1
 
 
 def add_message(notification):
@@ -41,26 +51,33 @@ def add_message(notification):
 
 
 def consume_messages():
-    ACTIVE_NOTIFICATION_PROCESS = set()
+    active_notification_processes = list()
 
     while True:
         notification = None
         if NOTIFICATION_QUEUE:
-            with NOTIFICATION_QUEUE_LOCK:
-                notification = NOTIFICATION_QUEUE.popleft()
+            y_position = find_and_reserve_free_space(NOTIFICATION_HEIGHT)
+            if y_position != -1:  # Free space exists
+                with NOTIFICATION_QUEUE_LOCK:
+                    notification = NOTIFICATION_QUEUE.popleft()
 
         if notification:
             _, message = notification
 
-            location = AT_FORMAT.format(
-                200 * (len(ACTIVE_NOTIFICATION_PROCESS) + 1))
+            location = AT_FORMAT.format(200 + y_position)
             command = COMMAND + [location, message]
 
-            p = subprocess.Popen(command)
-            ACTIVE_NOTIFICATION_PROCESS.add(p)
+            process = subprocess.Popen(command)
+            active_notification_processes.append([process, y_position])
 
-        ACTIVE_NOTIFICATION_PROCESS = set(
-            filter(poll, ACTIVE_NOTIFICATION_PROCESS))
+        active_notification_processes_new = []
+        for process, y_position in active_notification_processes:
+            if process.poll() == 0:
+                for i in range(NOTIFICATION_HEIGHT):
+                    BLOCKED_HEIGHT[y_position + i] = False
+            else:
+                active_notification_processes_new.append([process, y_position])
+        active_notification_processes = active_notification_processes_new
 
         time.sleep(0.1)
 
@@ -71,7 +88,6 @@ class XCowsayNotifications(dbus.service.Object):
     def __init__(self, bus_name, object_path):
         """Initialize the DBUS service object."""
         dbus.service.Object.__init__(self, bus_name, object_path)
-        # self.loop = loop
 
     @dbus.service.method("org.freedesktop.Notifications",
                          in_signature='susssasa{ss}i',
@@ -106,14 +122,14 @@ class XCowsayNotifications(dbus.service.Object):
 
     @dbus.service.method("org.freedesktop.Notifications", in_signature='', out_signature='as')
     def GetCapabilities(self):
-        return ("body")
+        return ""
 
     @dbus.service.signal('org.freedesktop.Notifications', signature='uu')
     def NotificationClosed(self, id_in, reason_in):
         pass
 
     @dbus.service.method("org.freedesktop.Notifications", in_signature='u', out_signature='')
-    def CloseNotification(self, id):
+    def CloseNotification(self, id_):
         pass
 
     @dbus.service.method("org.freedesktop.Notifications", in_signature='', out_signature='ssss')
@@ -121,7 +137,7 @@ class XCowsayNotifications(dbus.service.Object):
         return ("", "", "", "")
 
 
-if __name__ == "__main__":
+def main():
     DBusGMainLoop(set_as_default=True)
     bus_name = dbus.service.BusName(
         "org.freedesktop.Notifications",
@@ -134,3 +150,7 @@ if __name__ == "__main__":
     consume_messages_thread.start()
 
     GLib.MainLoop().run()
+
+
+if __name__ == "__main__":
+    main()
