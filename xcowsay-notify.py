@@ -17,7 +17,7 @@ MAXROWS = 30
 NOTIFICATION_HEIGHT = 200
 MAX_HEIGHT = 2400
 
-COMMAND = [
+XCOWSAY_COMMAND = [
     "xcowsay",
     "--font", "FiraCode Nerd Font 10",
     "--left",
@@ -28,6 +28,18 @@ AT_FORMAT = "--at=10000,{:d}"
 NOTIFICATION_QUEUE = deque()
 NOTIFICATION_QUEUE_LOCK = threading.Lock()
 BLOCKED_HEIGHT = [False] * MAX_HEIGHT
+BLOCKED_HEIGHT_LOCK = threading.Lock()
+
+
+def show_notification(y_position, message, notification_id):
+    location = AT_FORMAT.format(200 + y_position)
+
+    xcowsay_command = XCOWSAY_COMMAND + [location, message]
+
+    subprocess.Popen(xcowsay_command).wait()
+    with BLOCKED_HEIGHT_LOCK:
+        for i in range(y_position, y_position + NOTIFICATION_HEIGHT):
+            BLOCKED_HEIGHT[i] = False
 
 
 def find_and_reserve_free_space(height):
@@ -51,33 +63,20 @@ def add_message(notification):
 
 
 def consume_messages():
-    active_notification_processes = list()
-
     while True:
         notification = None
         if NOTIFICATION_QUEUE:
-            y_position = find_and_reserve_free_space(NOTIFICATION_HEIGHT)
-            if y_position != -1:  # Free space exists
+            with BLOCKED_HEIGHT_LOCK:
+                y_position = find_and_reserve_free_space(NOTIFICATION_HEIGHT)
+            if y_position != -1:
                 with NOTIFICATION_QUEUE_LOCK:
                     notification = NOTIFICATION_QUEUE.popleft()
 
         if notification:
-            _, message = notification
+            notification_id, message = notification
 
-            location = AT_FORMAT.format(200 + y_position)
-            command = COMMAND + [location, message]
-
-            process = subprocess.Popen(command)
-            active_notification_processes.append([process, y_position])
-
-        active_notification_processes_new = []
-        for process, y_position in active_notification_processes:
-            if process.poll() == 0:
-                for i in range(NOTIFICATION_HEIGHT):
-                    BLOCKED_HEIGHT[y_position + i] = False
-            else:
-                active_notification_processes_new.append([process, y_position])
-        active_notification_processes = active_notification_processes_new
+            threading.Thread(target=show_notification, args=(
+                y_position, message, notification_id)).start()
 
         time.sleep(0.1)
 
@@ -95,9 +94,8 @@ class XCowsayNotifications(dbus.service.Object):
     def Notify(self, app_name, notification_id, app_icon,
                summary, body, actions, hints, expire_timeout):
 
-        if not notification_id:
-            self._id += 1
-            notification_id = self._id
+        self._id += 1
+        notification_id = self._id
 
         message = "{:s}\n\n{:s}".format(summary, body)
         pruned_message = []
