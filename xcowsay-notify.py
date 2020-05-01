@@ -21,7 +21,8 @@ XCOWSAY_COMMAND = [
     "xcowsay",
     "--font", "FiraCode Nerd Font 10",
     "--left",
-    "--image", os.path.join(os.path.dirname(__file__), "cow_small_left.png")
+    "--image", os.path.join(os.path.dirname(__file__), "pug.png")
+    # "--image", os.path.join(os.path.dirname(__file__), "cow_small_left.png")
 ]
 
 AT_FORMAT = "--at=10000,{:d}"
